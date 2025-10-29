@@ -75,6 +75,13 @@ flowchart TD
 - Validates email format and domain MX records
 - Displays unique validated emails
 
+#### Import from Sheet (`--import-from-sheet`)
+- Imports leads from another sheet in the same spreadsheet
+- Maps columns from outreach sheet format to scraped_leads schema
+- Automatically deduplicates against existing leads
+- Supports columns: Business, Owner/Contact Name, phone, city, website
+- Ignores place_id field (leaves empty)
+
 ## Configuration
 
 Create a `.env` file with the following variables:
@@ -114,6 +121,9 @@ python -m src --verify
 
 # Extract and validate emails
 python -m src --emails
+
+# Import leads from another sheet (e.g., outreach sheet)
+python -m src --import-from-sheet "whats app outreach"
 ```
 
 ## Architecture

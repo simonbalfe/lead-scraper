@@ -323,13 +323,20 @@ class GoogleSheetsService:
         self.sheet_name = sheet_name
         self.creds_file = creds_file
         self.worksheet = self._get_worksheet()
+        self._spreadsheet_cache = None
+
+    def _get_spreadsheet(self) -> gspread.Spreadsheet:
+        """Get the spreadsheet object, with caching."""
+        if self._spreadsheet_cache is None:
+            creds = Credentials.from_service_account_file(
+                self.creds_file, scopes=self.SCOPES
+            )
+            client = gspread.authorize(creds)
+            self._spreadsheet_cache = client.open_by_key(self.sheet_id)
+        return self._spreadsheet_cache
 
     def _get_worksheet(self) -> gspread.Worksheet:
-        creds = Credentials.from_service_account_file(
-            self.creds_file, scopes=self.SCOPES
-        )
-        client = gspread.authorize(creds)
-        spreadsheet = client.open_by_key(self.sheet_id)
+        spreadsheet = self._get_spreadsheet()
 
         # Try to get the worksheet by name, or create it if it doesn't exist
         try:
@@ -622,6 +629,137 @@ class GoogleSheetsService:
 
         logging.info(f"Verification complete! Cleaned {total_cleaned} invalid links.")
 
+    def import_from_outreach_sheet(self, source_sheet_name: str) -> None:
+        """Import leads from an outreach sheet and add them to scraped_leads sheet.
+
+        The outreach sheet should have columns:
+        - Business name (first column)
+        - Owner/Contact Name
+        - phone
+        - city
+        - website
+        - And other columns that will be ignored
+        """
+        logging.info(f"Importing leads from outreach sheet: {source_sheet_name}")
+
+        try:
+            # Get the source worksheet
+            spreadsheet = self._get_spreadsheet()
+            source_worksheet = spreadsheet.worksheet(source_sheet_name)
+        except gspread.WorksheetNotFound:
+            logging.error(f"Source worksheet '{source_sheet_name}' not found!")
+            return
+
+        # Read all values from source sheet
+        all_values = source_worksheet.get_all_values()
+
+        if not all_values or len(all_values) <= 1:
+            logging.info("Source sheet is empty or only has headers.")
+            return
+
+        headers = all_values[0]
+        data_rows = all_values[1:]
+
+        # Find column indices
+        business_col = 0  # First column is business name
+        owner_col = None
+        phone_col = None
+        city_col = None
+        website_col = None
+
+        for i, header in enumerate(headers):
+            header_lower = header.lower().strip()
+            if "owner" in header_lower or "contact name" in header_lower:
+                owner_col = i
+            elif header_lower == "phone":
+                phone_col = i
+            elif header_lower == "city":
+                city_col = i
+            elif header_lower == "website":
+                website_col = i
+
+        logging.info(f"Found columns - Business: {business_col}, Owner: {owner_col}, "
+                    f"Phone: {phone_col}, City: {city_col}, Website: {website_col}")
+
+        # Read existing leads to avoid duplicates
+        existing_leads = self.read_leads()
+        existing_phones = {
+            lead.Phone.replace("+", "").replace(" ", "").strip()
+            for lead in existing_leads
+            if lead.Phone is not None and lead.Phone.strip()
+        }
+        existing_names = {
+            lead.Business.strip().lower()
+            for lead in existing_leads
+            if lead.Business is not None and lead.Business.strip()
+        }
+
+        # Parse rows and create lead data
+        new_leads = []
+        skipped_count = 0
+
+        for row_idx, row in enumerate(data_rows, start=2):
+            if not row or len(row) < 1:
+                continue
+
+            # Extract data from row
+            business = row[business_col].strip() if business_col < len(row) else ""
+            owner = row[owner_col].strip() if owner_col is not None and owner_col < len(row) else ""
+            phone = row[phone_col].strip() if phone_col is not None and phone_col < len(row) else ""
+            city = row[city_col].strip() if city_col is not None and city_col < len(row) else ""
+            website = row[website_col].strip() if website_col is not None and website_col < len(row) else ""
+
+            # Skip if no business name or phone
+            if not business or not phone:
+                logging.debug(f"Row {row_idx}: Skipping - missing business name or phone")
+                skipped_count += 1
+                continue
+
+            # Clean phone number
+            clean_phone = phone.replace("+", "").replace(" ", "").strip()
+            normalized_name = business.lower()
+
+            # Check for duplicates
+            if clean_phone in existing_phones:
+                logging.debug(f"Row {row_idx}: Skipping duplicate phone: {phone}")
+                skipped_count += 1
+                continue
+
+            if normalized_name in existing_names:
+                logging.debug(f"Row {row_idx}: Skipping duplicate business: {business}")
+                skipped_count += 1
+                continue
+
+            # Create lead data matching scraped_leads schema
+            lead_data = {
+                "place_id": "",  # Ignore place_id as requested
+                "title": business,
+                "website": website,
+                "owner": owner,
+                "email": "",  # Not available in outreach sheet
+                "phone": phone,
+                "instagram": "",  # Not available in outreach sheet
+                "facebook": "",  # Not available in outreach sheet
+                "linkedin": "",  # Not available in outreach sheet
+                "address": city,
+            }
+
+            new_leads.append(lead_data)
+            # Track to avoid duplicates within this batch
+            existing_phones.add(clean_phone)
+            existing_names.add(normalized_name)
+
+        logging.info(f"Found {len(data_rows)} rows in source sheet")
+        logging.info(f"Skipped {skipped_count} rows (duplicates or missing data)")
+        logging.info(f"Importing {len(new_leads)} new leads")
+
+        # Append to scraped_leads sheet
+        if new_leads:
+            self.append_leads(new_leads)
+            logging.info(f"Successfully imported {len(new_leads)} leads from {source_sheet_name}")
+        else:
+            logging.info("No new leads to import")
+
 
 class LeadScraperWorkflow:
     def __init__(self, config: Config) -> None:
@@ -772,6 +910,12 @@ def main() -> None:
         action="store_true",
         help="Fetch and display the first review for the first place ID in the sheet. No other scraping will be performed.",
     )
+    parser.add_argument(
+        "--import-from-sheet",
+        type=str,
+        metavar="SHEET_NAME",
+        help="Import leads from another sheet (e.g., outreach sheet) in the same spreadsheet and add to scraped_leads. Provide the name of the source sheet.",
+    )
     args = parser.parse_args()
 
     # Setup logging
@@ -802,6 +946,10 @@ def main() -> None:
     if args.verify:
         verifier = LinkVerificationService()
         sheets_service.verify_and_clean_links(verifier)
+        return
+
+    if args.import_from_sheet:
+        sheets_service.import_from_outreach_sheet(args.import_from_sheet)
         return
 
     if args.emails:
