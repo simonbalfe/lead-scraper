@@ -4,7 +4,6 @@ import re
 import time
 import logging
 from typing import Any
-import socket
 import dns.resolver
 
 import gspread
@@ -51,7 +50,7 @@ class ScrapedLead(BaseModel):
 
 
 class ExistingLead(BaseModel):
-    Name: str | None = Field(default=None, alias="Name")
+    Business: str | None = Field(default=None, alias="Business")
     Phone: str | None = Field(default=None, alias="Phone")
 
     class Config:
@@ -62,7 +61,10 @@ class ApifyService:
     def __init__(self, token: str) -> None:
         self.token = token
         self.base_url = "https://api.apify.com/v2"
-        self.headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        self.headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
 
     def start_scrape(self, request: ApifyScrapeRequest) -> str:
         url = f"{self.base_url}/acts/compass~crawler-google-places/runs"
@@ -114,15 +116,14 @@ class LinkVerificationService:
         try:
             logging.info(f"Verifying Instagram link: {url}")
             response = requests.head(
-                url,
-                headers=self.headers,
-                timeout=10,
-                allow_redirects=True
+                url, headers=self.headers, timeout=10, allow_redirects=True
             )
 
             # Check if it's a valid response (not 404, 403, etc.)
             if response.status_code >= 400:
-                logging.warning(f"Instagram link returned {response.status_code}: {url}")
+                logging.warning(
+                    f"Instagram link returned {response.status_code}: {url}"
+                )
                 return False
 
             # Check if it redirected to login or homepage (common for invalid profiles)
@@ -149,10 +150,7 @@ class LinkVerificationService:
         try:
             logging.info(f"Verifying Facebook link: {url}")
             response = requests.head(
-                url,
-                headers=self.headers,
-                timeout=10,
-                allow_redirects=True
+                url, headers=self.headers, timeout=10, allow_redirects=True
             )
 
             # Check if it's a valid response
@@ -236,9 +234,7 @@ class WebsiteScraperService:
 
             # Fetch website content
             response = requests.get(
-                url,
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=10
+                url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10
             )
             response.raise_for_status()
             content = response.text
@@ -251,7 +247,9 @@ class WebsiteScraperService:
                 logging.info(f"Found email: {emails[0]}")
 
             # Extract social media links
-            instagram_pattern = r"(?:https?://)?(?:www\.)?instagram\.com/([a-zA-Z0-9._]+)"
+            instagram_pattern = (
+                r"(?:https?://)?(?:www\.)?instagram\.com/([a-zA-Z0-9._]+)"
+            )
             facebook_pattern = r"(?:https?://)?(?:www\.)?facebook\.com/([a-zA-Z0-9._]+)"
             linkedin_pattern = r"(?:https?://)?(?:www\.)?linkedin\.com/(?:company|in)/([a-zA-Z0-9._-]+)"
 
@@ -267,7 +265,9 @@ class WebsiteScraperService:
 
             linkedin_matches = re.findall(linkedin_pattern, content)
             if linkedin_matches:
-                result["linkedin"] = f"https://linkedin.com/company/{linkedin_matches[0]}"
+                result["linkedin"] = (
+                    f"https://linkedin.com/company/{linkedin_matches[0]}"
+                )
                 logging.info(f"Found LinkedIn: {result['linkedin']}")
 
         except Exception as e:
@@ -288,7 +288,9 @@ class GoogleSheetsService:
         self.worksheet = self._get_worksheet()
 
     def _get_worksheet(self) -> gspread.Worksheet:
-        creds = Credentials.from_service_account_file(self.creds_file, scopes=self.SCOPES)
+        creds = Credentials.from_service_account_file(
+            self.creds_file, scopes=self.SCOPES
+        )
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(self.sheet_id)
 
@@ -328,7 +330,16 @@ class GoogleSheetsService:
         headers: list[str]
         if not all_values or not all_values[0]:
             logging.info("No headers found. Adding headers.")
-            headers = ["Name", "Phone", "Address", "Website", "Email", "Instagram", "Facebook", "LinkedIn"]
+            headers = [
+                "Name",
+                "Phone",
+                "Address",
+                "Website",
+                "Email",
+                "Instagram",
+                "Facebook",
+                "LinkedIn",
+            ]
             self.worksheet.append_row(headers)
         else:
             headers = all_values[0]
@@ -343,7 +354,7 @@ class GoogleSheetsService:
             "email": "Email",
             "instagram": "Instagram",
             "facebook": "Facebook",
-            "linkedin": "LinkedIn"
+            "linkedin": "LinkedIn",
         }
 
         values_to_append = []
@@ -408,8 +419,10 @@ class GoogleSheetsService:
         self.worksheet.clear()
         self.worksheet.update(unique_rows, value_input_option="USER_ENTERED")
 
-        logging.info(f"Deduplication complete! Removed {duplicates_removed} duplicates. "
-                    f"Kept {len(unique_rows) - 1} unique rows.")
+        logging.info(
+            f"Deduplication complete! Removed {duplicates_removed} duplicates. "
+            f"Kept {len(unique_rows) - 1} unique rows."
+        )
 
     def get_all_emails(self) -> list[str]:
         """Extract all emails from the Email column."""
@@ -487,7 +500,9 @@ class GoogleSheetsService:
             if instagram_col is not None and instagram_col < len(row):
                 instagram_url = row[instagram_col].strip()
                 if instagram_url and not verifier.verify_instagram(instagram_url):
-                    logging.info(f"Row {row_idx}: Clearing invalid Instagram link: {instagram_url}")
+                    logging.info(
+                        f"Row {row_idx}: Clearing invalid Instagram link: {instagram_url}"
+                    )
                     row[instagram_col] = ""
                     instagram_cleaned += 1
                     row_modified = True
@@ -496,7 +511,9 @@ class GoogleSheetsService:
             if facebook_col is not None and facebook_col < len(row):
                 facebook_url = row[facebook_col].strip()
                 if facebook_url and not verifier.verify_facebook(facebook_url):
-                    logging.info(f"Row {row_idx}: Clearing invalid Facebook link: {facebook_url}")
+                    logging.info(
+                        f"Row {row_idx}: Clearing invalid Facebook link: {facebook_url}"
+                    )
                     row[facebook_col] = ""
                     facebook_cleaned += 1
                     row_modified = True
@@ -535,9 +552,7 @@ class LeadScraperWorkflow:
         self, scraped: list[dict[str, Any]], existing: list[ExistingLead]
     ) -> list[dict[str, str]]:
         existing_phones = {
-            self._clean_phone(lead.Phone)
-            for lead in existing
-            if lead.Phone is not None
+            self._clean_phone(lead.Phone) for lead in existing if lead.Phone is not None
         }
 
         # Track existing names for deduplication
@@ -557,7 +572,10 @@ class LeadScraperWorkflow:
                 normalized_name = title.lower()
 
                 # Check if both phone and name are unique
-                if clean_phone not in existing_phones and normalized_name not in existing_names:
+                if (
+                    clean_phone not in existing_phones
+                    and normalized_name not in existing_names
+                ):
                     lead_data = {
                         "title": title,
                         "phone": clean_phone,
@@ -566,7 +584,7 @@ class LeadScraperWorkflow:
                         "email": "",
                         "instagram": "",
                         "facebook": "",
-                        "linkedin": ""
+                        "linkedin": "",
                     }
                     new_leads.append(lead_data)
                     # Add to tracking sets to prevent duplicates within this batch
@@ -642,17 +660,17 @@ def main() -> None:
     parser.add_argument(
         "--dedupe",
         action="store_true",
-        help="Remove duplicate rows from the sheet based on the first column (Name). No scraping will be performed."
+        help="Remove duplicate rows from the sheet based on the first column (Name). No scraping will be performed.",
     )
     parser.add_argument(
         "--verify",
         action="store_true",
-        help="Verify Instagram and Facebook links and remove invalid ones from the sheet. No scraping will be performed."
+        help="Verify Instagram and Facebook links and remove invalid ones from the sheet. No scraping will be performed.",
     )
     parser.add_argument(
         "--emails",
         action="store_true",
-        help="Extract and display all unique validated emails from the sheet. No scraping will be performed."
+        help="Extract and display all unique validated emails from the sheet. No scraping will be performed.",
     )
     args = parser.parse_args()
 
@@ -675,9 +693,7 @@ def main() -> None:
     # Dedupe mode - just remove duplicates and exit
     if args.dedupe:
         logging.info("Running in dedupe mode...")
-        sheets = GoogleSheetsService(
-            config.google_sheet_id, config.google_sheet_name
-        )
+        sheets = GoogleSheetsService(config.google_sheet_id, config.google_sheet_name)
         sheets.remove_duplicates()
         logging.info("Dedupe finished.")
         return
@@ -685,9 +701,7 @@ def main() -> None:
     # Verify mode - verify and clean invalid social media links
     if args.verify:
         logging.info("Running in verify mode...")
-        sheets = GoogleSheetsService(
-            config.google_sheet_id, config.google_sheet_name
-        )
+        sheets = GoogleSheetsService(config.google_sheet_id, config.google_sheet_name)
         verifier = LinkVerificationService()
         sheets.verify_and_clean_links(verifier)
         logging.info("Verification finished.")
@@ -696,9 +710,7 @@ def main() -> None:
     # Emails mode - extract and validate emails
     if args.emails:
         logging.info("Running in emails mode...")
-        sheets = GoogleSheetsService(
-            config.google_sheet_id, config.google_sheet_name
-        )
+        sheets = GoogleSheetsService(config.google_sheet_id, config.google_sheet_name)
         email_validator = EmailValidationService()
 
         # Get all emails from sheet
@@ -706,7 +718,9 @@ def main() -> None:
 
         # Get unique emails
         unique_emails = list(set(all_emails))
-        logging.info(f"Found {len(unique_emails)} unique emails out of {len(all_emails)} total.")
+        logging.info(
+            f"Found {len(unique_emails)} unique emails out of {len(all_emails)} total."
+        )
 
         # Validate emails
         valid_emails = []
@@ -721,21 +735,23 @@ def main() -> None:
                 logging.debug(f"Invalid email: {email}")
 
         # Print results
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print(f"VALIDATED UNIQUE EMAILS ({len(valid_emails)} total)")
-        print("="*60)
+        print("=" * 60)
         for email in sorted(valid_emails):
             print(email)
 
         if invalid_emails:
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print(f"INVALID EMAILS ({len(invalid_emails)} total)")
-            print("="*60)
+            print("=" * 60)
             for email in sorted(invalid_emails):
                 print(email)
 
-        print("\n" + "="*60)
-        logging.info(f"Emails mode finished. Valid: {len(valid_emails)}, Invalid: {len(invalid_emails)}")
+        print("\n" + "=" * 60)
+        logging.info(
+            f"Emails mode finished. Valid: {len(valid_emails)}, Invalid: {len(invalid_emails)}"
+        )
         return
 
     # Normal scraping mode
