@@ -47,6 +47,7 @@ class ScrapedLead(BaseModel):
     instagram: str | None = None
     facebook: str | None = None
     linkedin: str | None = None
+    place_id: str | None = None
 
 
 class ExistingLead(BaseModel):
@@ -98,6 +99,30 @@ class ApifyService:
         )
         response.raise_for_status()
         return response.json()
+
+    def scrape_reviews(self, place_id: str, max_reviews: int = 10) -> str:
+        """Scrape reviews for a given place ID using Apify."""
+        logging.info(f"Starting reviews scrape for place ID: {place_id}")
+
+        # Use Google Maps Reviews scraper
+        url = f"{self.base_url}/acts/compass~google-maps-reviews-scraper/runs"
+        request_data = {
+            "placeIds": [place_id],
+            "maxReviews": max_reviews,
+            "language": "en",
+        }
+
+        response = requests.post(
+            url,
+            json=request_data,
+            headers=self.headers,
+            params={"token": self.token},
+            timeout=30,
+        )
+        response.raise_for_status()
+        job_id = response.json()["data"]["id"]
+        logging.info(f"Started reviews scrape job with ID: {job_id}")
+        return job_id
 
 
 class LinkVerificationService:
@@ -278,6 +303,18 @@ class WebsiteScraperService:
 
 class GoogleSheetsService:
     SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+    EXPECTED_HEADERS = [
+        "ID",
+        "Business",
+        "Website",
+        "Owner",
+        "Email",
+        "Phone",
+        "Instagram",
+        "Facebook",
+        "Linkedin",
+        "Address",
+    ]
 
     def __init__(
         self, sheet_id: str, sheet_name: str, creds_file: str = "credentials.json"
@@ -298,28 +335,37 @@ class GoogleSheetsService:
         try:
             return spreadsheet.worksheet(self.sheet_name)
         except gspread.WorksheetNotFound:
-            logging.info(f"Worksheet '{self.sheet_name}' not found. Creating it.")
-            return spreadsheet.add_worksheet(title=self.sheet_name, rows=100, cols=20)
+            logging.info(f"Worksheet '{self.sheet_name}' not found, creating it.")
+            worksheet = spreadsheet.add_worksheet(
+                title=self.sheet_name, rows=1, cols=len(self.EXPECTED_HEADERS)
+            )
+            worksheet.append_row(self.EXPECTED_HEADERS)
+            return worksheet
 
     def read_leads(self) -> list[ExistingLead]:
+        """Read all leads from the Google Sheet."""
         logging.info("Reading existing leads from Google Sheet.")
-        all_values = self.worksheet.get_all_values()
+        try:
+            all_values = self.worksheet.get_all_values()
 
-        if not all_values:
-            logging.info("No existing leads found.")
+            if not all_values:
+                logging.info("No existing leads found.")
+                return []
+
+            headers = all_values[0]
+            leads = []
+            for row in all_values[1:]:
+                lead_dict = {
+                    headers[i]: row[i] if i < len(row) else None
+                    for i in range(len(headers))
+                }
+                leads.append(ExistingLead(**lead_dict))
+
+            logging.info(f"Found {len(leads)} existing leads.")
+            return leads
+        except Exception as e:
+            logging.error(f"Error reading leads from sheet: {e}")
             return []
-
-        headers = all_values[0]
-        leads = []
-        for row in all_values[1:]:
-            lead_dict = {
-                headers[i]: row[i] if i < len(row) else None
-                for i in range(len(headers))
-            }
-            leads.append(ExistingLead(**lead_dict))
-
-        logging.info(f"Found {len(leads)} existing leads.")
-        return leads
 
     def append_leads(self, leads: list[dict[str, str]]) -> None:
         if not leads:
@@ -331,14 +377,16 @@ class GoogleSheetsService:
         if not all_values or not all_values[0]:
             logging.info("No headers found. Adding headers.")
             headers = [
-                "Name",
-                "Phone",
-                "Address",
+                "ID",
+                "Business",
                 "Website",
+                "Owner",
                 "Email",
+                "Phone",
                 "Instagram",
                 "Facebook",
-                "LinkedIn",
+                "Linkedin",
+                "Address",
             ]
             self.worksheet.append_row(headers)
         else:
@@ -347,14 +395,16 @@ class GoogleSheetsService:
         logging.info(f"Appending {len(leads)} new leads to the sheet.")
 
         scraped_to_sheet_map = {
-            "title": "Name",
-            "phone": "Phone",
-            "address": "Address",
+            "place_id": "ID",
+            "title": "Business",
             "website": "Website",
+            "owner": "Owner",
             "email": "Email",
+            "phone": "Phone",
             "instagram": "Instagram",
             "facebook": "Facebook",
-            "linkedin": "LinkedIn",
+            "linkedin": "Linkedin",
+            "address": "Address",
         }
 
         values_to_append = []
@@ -367,12 +417,15 @@ class GoogleSheetsService:
             values_to_append.append(row)
 
         if values_to_append:
-            self.worksheet.append_rows(
-                values_to_append, value_input_option="USER_ENTERED"
-            )
+            try:
+                self.worksheet.append_rows(
+                    values_to_append, value_input_option="USER_ENTERED"
+                )
+            except Exception as e:
+                logging.error(f"Error appending leads to sheet: {e}")
 
     def remove_duplicates(self) -> None:
-        """Remove duplicate rows based on the first column (Name)."""
+        """Remove duplicate rows based on the first column (Business)."""
         logging.info("Reading all rows from the sheet...")
         all_values = self.worksheet.get_all_values()
 
@@ -457,6 +510,40 @@ class GoogleSheetsService:
 
         logging.info(f"Found {len(emails)} emails in the sheet.")
         return emails
+
+    def get_all_place_ids(self) -> list[str]:
+        """Extract all place IDs from the ID column."""
+        logging.info("Reading all place IDs from the sheet...")
+        all_values = self.worksheet.get_all_values()
+
+        if not all_values or len(all_values) <= 1:
+            logging.info("Sheet is empty or only has headers.")
+            return []
+
+        headers = all_values[0]
+        data_rows = all_values[1:]
+
+        # Find ID column index
+        id_col = None
+        for i, header in enumerate(headers):
+            if header.lower() == "id":
+                id_col = i
+                break
+
+        if id_col is None:
+            logging.warning("No ID column found in the sheet.")
+            return []
+
+        # Extract all non-empty place IDs
+        place_ids = []
+        for row in data_rows:
+            if id_col < len(row):
+                place_id = row[id_col].strip()
+                if place_id:
+                    place_ids.append(place_id)
+
+        logging.info(f"Found {len(place_ids)} place IDs in the sheet.")
+        return place_ids
 
     def verify_and_clean_links(self, verifier: "LinkVerificationService") -> None:
         """Verify Instagram and Facebook links and clear invalid ones."""
@@ -556,11 +643,15 @@ class LeadScraperWorkflow:
         }
 
         # Track existing names for deduplication
-        existing_names = {
-            lead.Name.strip().lower()
-            for lead in existing
-            if lead.Name is not None and lead.Name.strip()
-        }
+        existing_lead_names = set()
+        for lead in existing:
+            if lead.Business is not None:
+                existing_lead_names.add(lead.Business.strip().lower())
+            # check if the lead name is not None and not empty
+            if lead.Business is not None and lead.Business.strip():
+                pass
+            else:
+                logging.warning(f"Skipping lead with no name: {lead}")
 
         new_leads = []
         for item in scraped:
@@ -574,23 +665,25 @@ class LeadScraperWorkflow:
                 # Check if both phone and name are unique
                 if (
                     clean_phone not in existing_phones
-                    and normalized_name not in existing_names
+                    and normalized_name not in existing_lead_names
                 ):
                     lead_data = {
+                        "place_id": item.get("placeId", ""),
                         "title": title,
-                        "phone": clean_phone,
-                        "address": item.get("address", ""),
                         "website": item.get("website", ""),
+                        "owner": "",
                         "email": "",
+                        "phone": clean_phone,
                         "instagram": "",
                         "facebook": "",
                         "linkedin": "",
+                        "address": item.get("address", ""),
                     }
                     new_leads.append(lead_data)
                     # Add to tracking sets to prevent duplicates within this batch
                     existing_phones.add(clean_phone)
-                    existing_names.add(normalized_name)
-                elif normalized_name in existing_names:
+                    existing_lead_names.add(normalized_name)
+                elif normalized_name in existing_lead_names:
                     logging.debug(f"Skipping duplicate name: {title}")
                 elif clean_phone in existing_phones:
                     logging.debug(f"Skipping duplicate phone: {clean_phone}")
@@ -606,11 +699,13 @@ class LeadScraperWorkflow:
         for lead in leads:
             website = lead.get("website", "")
             if website:
+                # Scrape for email and social media
                 scraped_data = self.scraper.scrape_website(website)
                 lead["email"] = scraped_data.get("email") or ""
                 lead["instagram"] = scraped_data.get("instagram") or ""
                 lead["facebook"] = scraped_data.get("facebook") or ""
                 lead["linkedin"] = scraped_data.get("linkedin") or ""
+
             enriched_leads.append(lead)
 
         return enriched_leads
@@ -672,12 +767,18 @@ def main() -> None:
         action="store_true",
         help="Extract and display all unique validated emails from the sheet. No scraping will be performed.",
     )
+    parser.add_argument(
+        "--reviews",
+        action="store_true",
+        help="Fetch and display the first review for the first place ID in the sheet. No other scraping will be performed.",
+    )
     args = parser.parse_args()
 
+    # Setup logging
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+        level=logging.INFO,
+        handlers=[logging.StreamHandler()],
     )
-    logging.info("Starting application.")
 
     config = Config(
         apify_token=os.getenv("APIFY_TOKEN", ""),
@@ -685,36 +786,29 @@ def main() -> None:
         google_sheet_name=os.getenv("GOOGLE_SHEET_NAME", "scraped_leads"),
         search_term=os.getenv("SEARCH_TERM", "plumber"),
         location=os.getenv("LOCATION", "Manchester, GB"),
-        max_results=int(os.getenv("MAX_RESULTS", "120")),
-        poll_interval=int(os.getenv("POLL_INTERVAL", "30")),
+        max_results=int(os.getenv("MAX_RESULTS", 120)),
+        poll_interval=int(os.getenv("POLL_INTERVAL", 30)),
     )
     logging.info("Configuration loaded.")
 
-    # Dedupe mode - just remove duplicates and exit
+    sheets_service = GoogleSheetsService(
+        config.google_sheet_id, config.google_sheet_name
+    )
+
     if args.dedupe:
-        logging.info("Running in dedupe mode...")
-        sheets = GoogleSheetsService(config.google_sheet_id, config.google_sheet_name)
-        sheets.remove_duplicates()
-        logging.info("Dedupe finished.")
+        sheets_service.remove_duplicates()
         return
 
-    # Verify mode - verify and clean invalid social media links
     if args.verify:
-        logging.info("Running in verify mode...")
-        sheets = GoogleSheetsService(config.google_sheet_id, config.google_sheet_name)
         verifier = LinkVerificationService()
-        sheets.verify_and_clean_links(verifier)
-        logging.info("Verification finished.")
+        sheets_service.verify_and_clean_links(verifier)
         return
 
-    # Emails mode - extract and validate emails
     if args.emails:
-        logging.info("Running in emails mode...")
-        sheets = GoogleSheetsService(config.google_sheet_id, config.google_sheet_name)
         email_validator = EmailValidationService()
 
         # Get all emails from sheet
-        all_emails = sheets.get_all_emails()
+        all_emails = sheets_service.get_all_emails()
 
         # Get unique emails
         unique_emails = list(set(all_emails))
@@ -754,7 +848,72 @@ def main() -> None:
         )
         return
 
-    # Normal scraping mode
+    if args.reviews:
+        # Get all place IDs from the sheet
+        place_ids = sheets_service.get_all_place_ids()
+
+        if not place_ids:
+            logging.error("No place IDs found in the sheet.")
+            return
+
+        # Get the first place ID
+        first_place_id = place_ids[0]
+        logging.info(f"Using first place ID: {first_place_id}")
+
+        # Initialize Apify service
+        apify_service = ApifyService(config.apify_token)
+
+        # Start reviews scrape job
+        job_id = apify_service.scrape_reviews(first_place_id, max_reviews=10)
+
+        # Wait for the job to complete
+        logging.info(f"Waiting for job {job_id} to complete...")
+        while True:
+            status = apify_service.get_job_status(job_id)
+            if status.status == "SUCCEEDED":
+                logging.info(f"Job {job_id} succeeded.")
+                if status.defaultDatasetId is None:
+                    logging.error("Job succeeded but no dataset ID found")
+                    return
+                break
+            elif status.status == "FAILED":
+                logging.error(f"Job {job_id} failed.")
+                return
+            logging.info(f"Job {job_id} status is {status.status}. Waiting...")
+            time.sleep(config.poll_interval)
+
+        # Get the dataset
+        dataset = apify_service.get_dataset(status.defaultDatasetId)
+
+        if not dataset:
+            logging.warning("No reviews found in the dataset.")
+            return
+
+        # Get the first review
+        first_item = dataset[0]
+        reviews = first_item.get("reviews", [])
+
+        if not reviews:
+            logging.warning("No reviews found for this place.")
+            return
+
+        first_review = reviews[0]
+
+        # Print the first review
+        print("\n" + "=" * 60)
+        print("FIRST REVIEW")
+        print("=" * 60)
+        print(f"Reviewer: {first_review.get('name', 'N/A')}")
+        print(f"Rating: {first_review.get('stars', 'N/A')} stars")
+        print(f"Date: {first_review.get('publishedAtDate', 'N/A')}")
+        print(f"\nReview Text:")
+        print(first_review.get('text', 'N/A'))
+        print("=" * 60)
+
+        logging.info("Reviews mode finished.")
+        return
+
+    # Regular workflow
     workflow = LeadScraperWorkflow(config)
     workflow.run()
     logging.info("Workflow finished.")

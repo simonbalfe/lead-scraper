@@ -15,8 +15,13 @@ dependencies = [
     "google-auth>=2.42.0",
     "gspread>=6.2.1",
     "dnspython>=2.6.1",
+    "selenium>=4.27.1",
+    "webdriver-manager>=4.0.2",
+    "pandas>=2.0.0",
+    "openpyxl>=3.0.0",
+    "tqdm>=4.66.0",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 readme = "README.md"
 license = {text = "MIT"}
 
@@ -83,7 +88,7 @@ docstring-code-format = false
 docstring-code-line-length = "dynamic"
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 ignore_missing_imports = true
 exclude = [
