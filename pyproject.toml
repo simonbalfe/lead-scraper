@@ -1,0 +1,94 @@
+[project]
+name = "python-template"
+version = "0.1.0"
+description = "Basic python template"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.32.4",
+    "google-api-python-client>=2.0.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-auth>=2.42.0",
+    "gspread>=6.2.1",
+    "dnspython>=2.6.1",
+]
+requires-python = ">=3.8"
+readme = "README.md"
+license = {text = "MIT"}
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.ruff]
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+]
+
+line-length = 88
+indent-width = 4
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C90", "I", "N", "UP", "B", "A", "COM", "C4", "DTZ", "T10", "EM", "EXE", "ISC", "ICN", "G", "INP", "PIE", "T20", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SLOT", "SIM", "TID", "TCH", "ARG", "PTH", "ERA", "PD", "PGH", "PL", "TRY", "NPY", "AIR", "PERF", "FURB", "LOG", "RUF"]
+ignore = []
+
+fixable = ["ALL"]
+unfixable = []
+
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.pyrefly]
+project-includes = ["**/*"]
+project-excludes = ['**/*venv/**\*']
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = false
+docstring-code-line-length = "dynamic"
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+ignore_missing_imports = true
+exclude = [
+    "build",
+    "dist",
+    ".venv",
+    "venv",
+]
